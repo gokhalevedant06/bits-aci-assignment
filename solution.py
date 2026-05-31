@@ -1,6 +1,10 @@
 from enum import Enum
+import itertools
 from math import sqrt
 from typing import List
+import queue
+
+GRID_SIZE = 8
 
 class NodeType(Enum):
     PASSABLE_AIRSPACE = (".",1)
@@ -84,17 +88,107 @@ def build_grid(size: int, start_x, start_y, end_x, end_y):
 
     return grid
 
+# def show_grid(grid, path= []):
+#     path_set = set(path)
+#     for row in grid:
+#         for node in row:
+#             if node in path_set:
+#                 print("*", end="   ")
+#             else:
+#                 print(node.type, end="   ")
+#         print()
 
-def show_grid(grid):
+def show_grid(grid, path=[]):
+    path_set = set(path)
+
+    size = len(grid)
+
+    boundary = "+---" * size + "+"
+
+    print(boundary)
+
     for row in grid:
-        for col in row:
-            print(col.x, col.y, col.type, col.score)
+        print("|", end="")
+
+        for node in row:
+            if node in path_set:
+                print(" * |", end="")
+            else:
+                print(f" {node.type} |", end="")
+
+        print()
+        print(boundary)
+    print("\n")
+
+def get_neighbours(grid, node: Node):
+    neighbours = []
+    
+    # traverse left
+    if node.x >=1:
+        neighbours.append(grid[node.x-1][node.y])
+    
+    # traverse right
+    if node.x < GRID_SIZE - 1:
+        neighbours.append(grid[node.x+1][node.y])
+
+    # traverse down
+    if node.y < GRID_SIZE - 1:
+        neighbours.append(grid[node.x][node.y+1])
+
+    # traverse up
+    if node.y >=1:
+        neighbours.append(grid[node.x][node.y-1])
+
+    return neighbours
+
+def astar(grid, start_node: Node, end_node: Node, heuristic_fx: HeuristicType = HeuristicType.BOUNDING_BOX_RISK_WEIGHTED):
+    pq = queue.PriorityQueue()
+    counter = itertools.count()
+    visited = set()
+    parent = {}
+    g_score = {}
+    g_score[start_node] = 0
+    parent[start_node] = None
+    h_val = heuristic(grid, grid[start_node.x][start_node.y], grid[end_node.x][end_node.y], heuristic_fx)
+    f_val = g_score.get(start_node) + h_val
+    pq.put((f_val, next(counter), start_node))
+    while not pq.empty():
+        f_val, cnt, current_node = pq.get()
+        current_cost = g_score.get(current_node)
+        if current_node in visited:
+            continue
+        visited.add(current_node)
+
+        if current_node == end_node:
+            show_grid(grid, visited)
+            path = []
+            while(current_node):
+                path.append(current_node)
+                current_node = parent.get(current_node)
+            
+            path.reverse()
+
+            print(" -> ".join(f"({node.x},{node.y})" for node in path))
+
+            print("DESTINATION REACHED WITH COST", g_score.get(end_node))
+            break
+    
+        for node in get_neighbours(grid, current_node):
+            if node in visited:
+                continue
+            new_cost = current_cost + node.score
+            if node not in g_score or new_cost < g_score.get(node):   
+                parent[node] = current_node
+                g_score[node] = new_cost
+                h_val = heuristic(grid, grid[node.x][node.y], grid[end_node.x][end_node.y], heuristic_fx)
+                f_val = new_cost + h_val
+                pq.put((f_val, next(counter), node))
+        
 
 def main():
-    GRID_SIZE = 8
     grid = build_grid(GRID_SIZE, 0,0,6,7)
     show_grid(grid)
-    print(heuristic(grid, grid[3][3], grid[6][7], HeuristicType.BOUNDING_BOX_RISK_WEIGHTED))
+    astar(grid, grid[0][0], grid[6][7])
 
 if __name__ == "__main__":
     main()
