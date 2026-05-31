@@ -183,12 +183,52 @@ def astar(grid, start_node: Node, end_node: Node, heuristic_fx: HeuristicType = 
                 h_val = heuristic(grid, grid[node.x][node.y], grid[end_node.x][end_node.y], heuristic_fx)
                 f_val = new_cost + h_val
                 pq.put((f_val, next(counter), node))
+
+
+def gbfs(grid, start_node: Node, end_node: Node, heuristic_fx: HeuristicType = HeuristicType.BOUNDING_BOX_RISK_WEIGHTED):
+    pq = queue.PriorityQueue()
+    counter = itertools.count()
+    visited = set()
+    explored = set()
+    parent = {}
+    parent[start_node] = None
+    explored.add(start_node)
+    h_val = heuristic(grid, grid[start_node.x][start_node.y], grid[end_node.x][end_node.y], heuristic_fx)
+    pq.put((h_val, next(counter), start_node))
+    while not pq.empty():
+        h_val, cnt, current_node = pq.get()
+        if current_node in visited:
+            continue
+        visited.add(current_node)
+
+        if current_node == end_node:
+            show_grid(grid, visited)
+            path = []
+            while(current_node):
+                path.append(current_node)
+                current_node = parent.get(current_node)
+            
+            path.reverse()
+
+            print(" -> ".join(f"({node.x},{node.y})" for node in path))
+
+            print("DESTINATION REACHED WITH COST")
+            break
+    
+        for node in get_neighbours(grid, current_node):
+            if node not in explored:
+                explored.add(node)
+                parent[node] = current_node
+                h_val = heuristic(grid, grid[node.x][node.y], grid[end_node.x][end_node.y], heuristic_fx)
+                pq.put((h_val, next(counter), node))
         
+    
 
 def main():
     grid = build_grid(GRID_SIZE, 0,0,6,7)
     show_grid(grid)
-    astar(grid, grid[0][0], grid[6][7])
+    # astar(grid, grid[0][0], grid[6][7])
+    gbfs(grid, grid[0][0], grid[6][7])
 
 if __name__ == "__main__":
     main()
