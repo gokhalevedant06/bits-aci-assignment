@@ -3,64 +3,197 @@ import itertools
 from math import sqrt
 from typing import List
 import queue
+import time
 
 GRID_SIZE = 8
 
+results = {}
+
+
 class NodeType(Enum):
-    PASSABLE_AIRSPACE = (".",1)
-    WEATHER_HAZARD = ("W",4)
-    NO_FLY_ZONE = ("N",8)
+    """
+    Represents different cell types in the environment.
+
+    Each cell type is associated with:
+    1. A visual symbol
+    2. A traversal cost
+
+    Symbols:
+    S : Start Node
+    E : Goal Node
+    . : Passable Airspace
+    W : Weather Hazard
+    N : No-Fly Zone
+    """
+    PASSABLE_AIRSPACE = (".", 1)
+    WEATHER_HAZARD = ("W", 4)
+    NO_FLY_ZONE = ("N", 8)
     START = ("S", 2)
     END = ("E", 2)
 
+
 class MovementModel(Enum):
+    """
+    Represents the allowed movement directions
+    for the drone.
+
+    The drone can move only in four orthogonal directions:
+    North, South, East and West.
+
+    Diagonal movement is prohibited.
+    """
     NORTH = 1
     SOUTH = 2
     EAST = 3
     WEST = 4
 
+
 class Node:
+    """
+    Represents a single cell in the grid.
+
+    Attributes:
+    x      : Row index
+    y      : Column index
+    type   : Cell type symbol
+    score  : Traversal cost of the cell
+
+    The class implements hashing and equality
+    to allow Node objects to be stored in sets
+    and dictionaries.
+    """
+
     def __init__(self, x: int, y: int, type: NodeType) -> None:
         self.x = x
         self.y = y
         self.type = type[0]
         self.score = type[1]
 
+    def __hash__(self):
+        return hash((self.x, self.y))
+
+    def __eq__(self, other):
+        return isinstance(other, Node) and self.x == other.x and self.y == other.y
+
 
 class HeuristicType(Enum):
+    """
+    Enumeration of the supported heuristics.
+
+    h1 : Euclidean Distance
+    h2 : Bounding Box Risk Weighted Heuristic
+    """
     EUCLIDEAN_DISTANCE = "h1"
     BOUNDING_BOX_RISK_WEIGHTED = "h2"
 
-def euclidean_distance(current_state: Node, goal_state: Node):
-    return sqrt(((goal_state.x - current_state.x)*(goal_state.x - current_state.x) + (goal_state.y - current_state.y)*(goal_state.y - current_state.y)))
 
-def manhatten_distance(current_state: Node, goal_state: Node):
+def euclidean_distance(current_state: Node, goal_state: Node):
+    """
+    Computes the Euclidean distance between
+    the current node and the goal node.
+
+    Formula:
+    h1(n) = sqrt((xg - xn)^2 + (yg - yn)^2)
+
+    Parameters:
+    current_state : Current node
+    goal_state    : Goal node
+
+    Returns:
+    Euclidean distance value.
+    """
+    return sqrt(((goal_state.x - current_state.x) * (goal_state.x - current_state.x) + (
+            goal_state.y - current_state.y) * (goal_state.y - current_state.y)))
+
+
+def manhattan_distance(current_state: Node, goal_state: Node):
+    """
+    Computes the Manhattan distance between
+    the current node and the goal node.
+
+    Formula:
+    |xg - xn| + |yg - yn|
+
+    Used internally by the Bounding Box
+    Risk Weighted heuristic.
+
+    Returns:
+    Manhattan distance value.
+    """
     return abs(goal_state.x - current_state.x) + abs(goal_state.y - current_state.y)
 
 
 def bounding_box_risk_weighted(grid: List[List[Node]], current_state: Node, goal_state: Node):
-    manhatten = manhatten_distance(current_state, goal_state)
-    k = abs(goal_state.x - current_state.x+1) * abs(goal_state.y - current_state.y+1)
+    """
+    Computes the Bounding Box Risk Weighted
+    heuristic (h2).
+
+    The heuristic estimates the future risk
+    between the current node and goal node.
+
+    Steps:
+    1. Calculate Manhattan distance.
+    2. Construct the bounding box between
+       current node and goal node.
+    3. Sum the traversal costs of all cells
+       inside the bounding box.
+    4. Compute average risk.
+    5. Multiply Manhattan distance by
+       average risk.
+
+    Formula:
+    h2 = ManhattanDistance × AverageRisk
+
+    Returns:
+    Risk weighted heuristic value.
+    """
+    manhattan = manhattan_distance(current_state, goal_state)
+    k = (abs(goal_state.x - current_state.x) + 1) * (abs(goal_state.y - current_state.y) + 1)
     x_min = min(current_state.x, goal_state.x)
     x_max = max(current_state.x, goal_state.x)
     y_min = min(current_state.y, goal_state.y)
     y_max = max(current_state.y, goal_state.y)
     partial_score = 0
-    for row in range(x_min, x_max+1):
-        for col in range(y_min, y_max+1):
-            partial_score+=grid[row][col].score
-    return manhatten * (partial_score/k)
+    for row in range(x_min, x_max + 1):
+        for col in range(y_min, y_max + 1):
+            partial_score += grid[row][col].score
+    return manhattan * (partial_score / k)
 
 
 def heuristic(grid, current_state: Node, goal_state: Node, type: HeuristicType):
+    """
+    Dispatcher function used to select
+    the heuristic requested by the user.
+
+    Supported heuristics:
+    - Euclidean Distance (h1)
+    - Bounding Box Risk Weighted (h2)
+
+    Returns:
+    Heuristic value.
+    """
     if type == HeuristicType.EUCLIDEAN_DISTANCE:
         return euclidean_distance(current_state, goal_state)
     elif type == HeuristicType.BOUNDING_BOX_RISK_WEIGHTED:
         return bounding_box_risk_weighted(grid, current_state, goal_state)
     else:
-        pass
+        raise ValueError(f"Unsupported heuristic: {type}")
+
 
 def build_grid(size: int, start_x, start_y, end_x, end_y):
+    """
+    Creates and initializes the 8×8 environment.
+
+    The method:
+    1. Creates passable airspace cells.
+    2. Places the start node.
+    3. Places the goal node.
+    4. Places weather hazard zones.
+    5. Places no-fly zones.
+
+    Returns:
+    Fully initialized grid.
+    """
     grid = [[Node(x, y, NodeType.PASSABLE_AIRSPACE.value) for y in range(size)] for x in range(size)]
 
     grid[start_x][start_y] = Node(start_x, start_y, NodeType.START.value)
@@ -88,17 +221,19 @@ def build_grid(size: int, start_x, start_y, end_x, end_y):
 
     return grid
 
-# def show_grid(grid, path= []):
-#     path_set = set(path)
-#     for row in grid:
-#         for node in row:
-#             if node in path_set:
-#                 print("*", end="   ")
-#             else:
-#                 print(node.type, end="   ")
-#         print()
 
 def show_grid(grid, path=[]):
+    """
+    Displays the environment in a visual grid format.
+
+    If a path is provided, the cells belonging
+    to the final solution path are highlighted
+    using '*'.
+
+    Parameters:
+    grid : Environment grid
+    path : Final solution path
+    """
     path_set = set(path)
 
     size = len(grid)
@@ -120,28 +255,292 @@ def show_grid(grid, path=[]):
         print(boundary)
     print("\n")
 
+
+def print_complexity_analysis():
+    """
+    Displays the complexity and performance metrics
+    collected from all search algorithms.
+
+    The method summarizes:
+
+    1. Nodes Expanded
+       Total number of explored nodes.
+
+    2. Runtime
+       Execution time in milliseconds.
+
+    3. Memory Usage
+       Combined size of the OPEN and CLOSED lists.
+
+    4. Path Cost
+       Total transition cost of the final path.
+
+    5. Path Length
+       Number of moves required to reach the goal.
+
+    In addition, the method displays the
+    theoretical time and space complexity
+    of GBFS and A*.
+
+    Complexity:
+        GBFS
+            Time  : O(V log V)
+            Space : O(V)
+
+        A*
+            Time  : O(V log V)
+            Space : O(V)
+
+    Returns:
+        None
+    """
+    print("\n" + "=" * 100)
+    print("COMPLEXITY ANALYSIS")
+    print("=" * 100)
+
+    print(
+        f"{'Algorithm':<15}"
+        f"{'Nodes':<10}"
+        f"{'Runtime(ms)':<15}"
+        f"{'Memory':<10}"
+        f"{'Cost':<10}"
+        f"{'Length':<10}"
+    )
+
+    for algo, data in results.items():
+        print(
+            f"{algo:<15}"
+            f"{data['nodes_expanded']:<10}"
+            f"{data['runtime']:<15.3f}"
+            f"{data['memory']:<10}"
+            f"{data['cost']:<10}"
+            f"{data['path_length']:<10}"
+        )
+
+    print("\nTHEORETICAL COMPLEXITY")
+    print("GBFS Time Complexity : O(V log V)")
+    print("GBFS Space Complexity: O(V)")
+    print("A* Time Complexity   : O(V log V)")
+    print("A* Space Complexity  : O(V)")
+
+
+def compare_heuristics():
+    """
+    Compares the performance of the two
+    heuristic functions used by GBFS.
+
+    Compared Heuristics:
+        h1 - Euclidean Distance
+        h2 - Bounding Box Risk Weighted
+
+    The comparison includes:
+
+    1. Nodes Expanded
+       Measures search efficiency.
+
+    2. Runtime
+       Measures execution speed.
+
+    3. Path Cost
+       Measures the quality of the path found.
+
+    The method also identifies which
+    heuristic produced the better path
+    based on the final path cost.
+
+    This analysis helps evaluate whether
+    the future-aware heuristic (h2)
+    provides an advantage over the
+    traditional Euclidean heuristic (h1).
+
+    Returns:
+        None
+    """
+    print("\n" + "=" * 100)
+    print("GBFS HEURISTIC COMPARISON")
+    print("=" * 100)
+
+    h1 = results.get("GBFS-h1")
+    h2 = results.get("GBFS-h2")
+
+    if not h1 or not h2:
+        return
+
+    print(
+        f"{'Metric':<20}"
+        f"{'h1':<15}"
+        f"{'h2':<15}"
+    )
+
+    print(
+        f"{'Nodes Expanded':<20}"
+        f"{h1['nodes_expanded']:<15}"
+        f"{h2['nodes_expanded']:<15}"
+    )
+
+    print(
+        f"{'Runtime(ms)':<20}"
+        f"{round(h1['runtime'], 3):<15}"
+        f"{round(h2['runtime'], 3):<15}"
+    )
+
+    print(
+        f"{'Path Cost':<20}"
+        f"{h1['cost']:<15}"
+        f"{h2['cost']:<15}"
+    )
+
+    if h1["cost"] < h2["cost"]:
+        print("\nh1 produced a lower cost path.")
+
+    elif h2["cost"] < h1["cost"]:
+        print("\nh2 produced a lower cost path.")
+
+    else:
+        print("\nBoth heuristics produced the same cost.")
+
+
+def compare_algorithms():
+    """
+    Compares GBFS and A* Search algorithms.
+
+    The comparison is performed using:
+
+    1. Nodes Expanded
+    2. Runtime
+    3. Path Cost
+    4. Completeness
+
+    Returns:
+        None
+    """
+
+    print("\n" + "=" * 100)
+    print("GBFS vs A* COMPARISON")
+    print("=" * 100)
+
+    print(
+        f"{'Algorithm':<15}"
+        f"{'Nodes':<15}"
+        f"{'Runtime(ms)':<15}"
+        f"{'Cost':<15}"
+    )
+
+    for algo, data in results.items():
+        print(
+            f"{algo:<15}"
+            f"{data['nodes_expanded']:<15}"
+            f"{round(data['runtime'], 3):<15}"
+            f"{data['cost']:<15}"
+        )
+
+    print("\nCOMPLETENESS ANALYSIS")
+    print("---------------------")
+    print("A*   : Complete")
+    print("GBFS : Not guaranteed complete in general")
+
+    print("\nFASTEST ALGORITHM")
+    print("-----------------")
+
+    fastest = min(
+        results.items(),
+        key=lambda x: x[1]["runtime"]
+    )
+
+    print(
+        f"{fastest[0]} "
+        f"was fastest with "
+        f"{fastest[1]['runtime']:.3f} ms"
+    )
+
+    print("\nLOWEST COST PATH")
+    print("----------------")
+
+    cheapest = min(
+        results.items(),
+        key=lambda x: x[1]["cost"]
+    )
+
+    print(
+        f"{cheapest[0]} "
+        f"produced the lowest path cost "
+        f"of {cheapest[1]['cost']}"
+    )
+
+
 def get_neighbours(grid, node: Node):
+    """
+    Generates all valid neighboring nodes.
+
+    Neighbor expansion follows the mandatory
+    tie-breaking order specified in the assignment:
+
+    1. North
+    2. East
+    3. South
+    4. West
+
+    This ordering ensures consistent node
+    selection when heuristic values are equal.
+
+    Parameters:
+    grid : Environment grid
+    node : Current node
+
+    Returns:
+    List of neighboring nodes.
+    """
     neighbours = []
-    
-    # traverse left
-    if node.x >=1:
-        neighbours.append(grid[node.x-1][node.y])
-    
-    # traverse right
-    if node.x < GRID_SIZE - 1:
-        neighbours.append(grid[node.x+1][node.y])
 
-    # traverse down
+    # NORTH
+    if node.x >= 1:
+        neighbours.append(grid[node.x - 1][node.y])
+
+    # EAST
     if node.y < GRID_SIZE - 1:
-        neighbours.append(grid[node.x][node.y+1])
+        neighbours.append(grid[node.x][node.y + 1])
 
-    # traverse up
-    if node.y >=1:
-        neighbours.append(grid[node.x][node.y-1])
+    # SOUTH
+    if node.x < GRID_SIZE - 1:
+        neighbours.append(grid[node.x + 1][node.y])
+
+    # WEST
+    if node.y >= 1:
+        neighbours.append(grid[node.x][node.y - 1])
 
     return neighbours
 
-def astar(grid, start_node: Node, end_node: Node, heuristic_fx: HeuristicType = HeuristicType.BOUNDING_BOX_RISK_WEIGHTED):
+
+def astar(grid, start_node: Node, end_node: Node, heuristic_fx: HeuristicType = HeuristicType.EUCLIDEAN_DISTANCE):
+    """
+    Implements the A* Search algorithm.
+
+    Evaluation Function:
+    f(n) = g(n) + h(n)
+
+    where:
+    g(n) = Path cost from start node
+    h(n) = Euclidean distance heuristic
+
+    Features:
+    - Frontier management using Priority Queue
+    - Explored set tracking
+    - Path reconstruction
+    - Runtime measurement
+    - Memory usage measurement
+    - Path statistics generation
+
+    Parameters:
+    grid         : Environment grid
+    start_node   : Source node
+    end_node     : Goal node
+    heuristic_fx : Heuristic function
+
+    Returns:
+    Optimal path to goal node.
+    """
+    goal_found = False
+    start_time = time.perf_counter()
     pq = queue.PriorityQueue()
     counter = itertools.count()
     visited = set()
@@ -152,40 +551,127 @@ def astar(grid, start_node: Node, end_node: Node, heuristic_fx: HeuristicType = 
     h_val = heuristic(grid, grid[start_node.x][start_node.y], grid[end_node.x][end_node.y], heuristic_fx)
     f_val = g_score.get(start_node) + h_val
     pq.put((f_val, next(counter), start_node))
+    if pq.empty():
+        print("ERROR: Frontier is empty.")
+        return
     while not pq.empty():
+
+        print("\nFRONTIER:")
+
+        for item in list(pq.queue):
+            print(f"({item[2].x},{item[2].y}) "f"h={round(item[0], 2)}")
+
         f_val, cnt, current_node = pq.get()
+
         current_cost = g_score.get(current_node)
         if current_node in visited:
             continue
         visited.add(current_node)
 
+        print("\nEXPLORED NODES:")
+
+        for node in visited:
+            print(f"({node.x},{node.y})", end=" ")
+
+        print("\n")
+
+        print(f"\nSELECTED NODE : "f"({current_node.x},{current_node.y})")
+
+        current_h = heuristic(grid, current_node, end_node, heuristic_fx)
+
+        print(f"HEURISTIC VALUE : {round(current_h, 2)}")
+
         if current_node == end_node:
-            show_grid(grid, visited)
             path = []
-            while(current_node):
+            while (current_node):
                 path.append(current_node)
                 current_node = parent.get(current_node)
-            
+
             path.reverse()
 
+            cost = sum(node.score for node in path)
+
+            show_grid(grid, path)
+
+            weather_count = 0
+            nofly_count = 0
+
+            for node in path:
+                if node.type == "W":
+                    weather_count += 1
+                elif node.type == "N":
+                    nofly_count += 1
+
+            print("WEATHER CELLS:", weather_count)
+            print("NO FLY CELLS:", nofly_count)
+
+            print("Followed Path: ")
             print(" -> ".join(f"({node.x},{node.y})" for node in path))
 
-            print("DESTINATION REACHED WITH COST", g_score.get(end_node))
+            end_time = time.perf_counter()
+
+            runtime_ms = (end_time - start_time) * 1000
+
+            memory_usage = len(visited) + pq.qsize()
+
+            results["A*-h1"] = {
+                "nodes_expanded": len(visited),
+                "runtime": runtime_ms,
+                "memory": memory_usage,
+                "cost": cost,
+                "path_length": len(path) - 1,
+                "heuristic": round(current_h, 2)
+            }
+
+            goal_found = True
             break
-    
+
         for node in get_neighbours(grid, current_node):
-            if node in visited:
+            if node in visited or node.type == "N":
                 continue
             new_cost = current_cost + node.score
-            if node not in g_score or new_cost < g_score.get(node):   
+            if node not in g_score or new_cost < g_score.get(node):
                 parent[node] = current_node
                 g_score[node] = new_cost
                 h_val = heuristic(grid, grid[node.x][node.y], grid[end_node.x][end_node.y], heuristic_fx)
                 f_val = new_cost + h_val
                 pq.put((f_val, next(counter), node))
 
+    if not goal_found:
+        print("ERROR: Goal node could not be reached.")
 
-def gbfs(grid, start_node: Node, end_node: Node, heuristic_fx: HeuristicType = HeuristicType.BOUNDING_BOX_RISK_WEIGHTED):
+
+def gbfs(grid, start_node: Node, end_node: Node,
+         heuristic_fx: HeuristicType = HeuristicType.BOUNDING_BOX_RISK_WEIGHTED):
+    """
+    Implements Greedy Best First Search.
+
+    Node selection is based only on:
+    f(n) = h(n)
+
+    Supported heuristics:
+    - Euclidean Distance (h1)
+    - Bounding Box Risk Weighted (h2)
+
+    Features:
+    - Frontier management
+    - Explored node tracking
+    - Path reconstruction
+    - Runtime measurement
+    - Memory usage measurement
+    - Path statistics generation
+
+    Parameters:
+    grid         : Environment grid
+    start_node   : Source node
+    end_node     : Goal node
+    heuristic_fx : Selected heuristic
+
+    Returns:
+    Path from start node to goal node.
+    """
+    goal_found = False
+    start_time = time.perf_counter()
     pq = queue.PriorityQueue()
     counter = itertools.count()
     visited = set()
@@ -195,40 +681,146 @@ def gbfs(grid, start_node: Node, end_node: Node, heuristic_fx: HeuristicType = H
     explored.add(start_node)
     h_val = heuristic(grid, grid[start_node.x][start_node.y], grid[end_node.x][end_node.y], heuristic_fx)
     pq.put((h_val, next(counter), start_node))
+    if pq.empty():
+        print("ERROR: Frontier is empty.")
+        return
     while not pq.empty():
+        print("\nFRONTIER:")
+
+        for item in list(pq.queue):
+            print(f"({item[2].x},{item[2].y}) "f"h={round(item[0], 2)}")
+
         h_val, cnt, current_node = pq.get()
+
         if current_node in visited:
             continue
         visited.add(current_node)
 
+        print("\nEXPLORED NODES:")
+
+        for node in visited:
+            print(f"({node.x},{node.y})", end=" ")
+
+        print("\n")
+
+        print(f"\nSELECTED NODE : "f"({current_node.x},{current_node.y})")
+
+        current_h = heuristic(grid, current_node, end_node, heuristic_fx)
+
+        print(f"HEURISTIC VALUE : "f"{round(current_h, 2)}")
+
         if current_node == end_node:
-            show_grid(grid, visited)
             path = []
-            while(current_node):
+            while (current_node):
                 path.append(current_node)
                 current_node = parent.get(current_node)
-            
+
             path.reverse()
 
+            cost = sum(node.score for node in path)
+
+            show_grid(grid, path)
+
+            weather_count = 0
+            nofly_count = 0
+
+            for node in path:
+                if node.type == "W":
+                    weather_count += 1
+                elif node.type == "N":
+                    nofly_count += 1
+
+            print("WEATHER CELLS:", weather_count)
+            print("NO FLY CELLS:", nofly_count)
+
+            print("Followed Path: ")
             print(" -> ".join(f"({node.x},{node.y})" for node in path))
 
-            print("DESTINATION REACHED WITH COST")
+            end_time = time.perf_counter()
+
+            runtime_ms = (end_time - start_time) * 1000
+
+            memory_usage = len(visited) + pq.qsize()
+
+            results[f"GBFS-{heuristic_fx.value}"] = {
+                "nodes_expanded": len(visited),
+                "runtime": runtime_ms,
+                "memory": memory_usage,
+                "cost": cost,
+                "path_length": len(path) - 1,
+                "heuristic": round(current_h, 2)
+            }
+
+            goal_found = True
             break
-    
+
         for node in get_neighbours(grid, current_node):
+            if node.type == "N":
+                continue
             if node not in explored:
                 explored.add(node)
                 parent[node] = current_node
                 h_val = heuristic(grid, grid[node.x][node.y], grid[end_node.x][end_node.y], heuristic_fx)
                 pq.put((h_val, next(counter), node))
-        
-    
+
+    if not goal_found:
+        print("ERROR: Goal node could not be reached.")
+
 
 def main():
-    grid = build_grid(GRID_SIZE, 0,0,6,7)
+    """
+    Driver function of the program.
+
+    Execution Flow:
+    1. Build environment grid.
+    2. Display initial environment.
+    3. Execute GBFS using h2.
+    4. Execute GBFS using h1.
+    5. Execute A* using h1.
+    6. Display search statistics and results.
+
+    This function serves as the entry point
+    of the application.
+    """
+    grid = build_grid(GRID_SIZE, 0, 0, 6, 7)
+
+    print("=" * 100)
+    print("=" * 100)
+
+    print("\nInitial Grid\n")
+
     show_grid(grid)
-    # astar(grid, grid[0][0], grid[6][7])
-    gbfs(grid, grid[0][0], grid[6][7])
+
+    print("=" * 100)
+    print("=" * 100)
+
+    print("\nGBFS USING H2\n")
+    gbfs(grid, grid[0][0], grid[6][7], HeuristicType.BOUNDING_BOX_RISK_WEIGHTED)
+
+    print("=" * 100)
+    print("=" * 100)
+
+    print("\nGBFS USING H1\n")
+    gbfs(grid, grid[0][0], grid[6][7], HeuristicType.EUCLIDEAN_DISTANCE)
+
+    print("=" * 100)
+    print("=" * 100)
+
+    print("\nA* USING H1\n")
+    astar(grid, grid[0][0], grid[6][7], HeuristicType.EUCLIDEAN_DISTANCE)
+
+    print("=" * 100)
+
+    print_complexity_analysis()
+
+    print("=" * 100)
+
+    compare_heuristics()
+
+    print("=" * 100)
+
+    compare_algorithms()
+
 
 if __name__ == "__main__":
     main()
