@@ -185,15 +185,22 @@ def astar(grid, start_node: Node, end_node: Node, heuristic_fx: HeuristicType = 
             break
     
         for node in get_neighbours(grid, current_node):
-            if node in visited:
-                continue
+            # if node in visited:
+            #     continue
             new_cost = current_cost + node.score
-            if node not in g_score or new_cost < g_score.get(node):   
+            # we need to see this condition, 
+            # it should be solved by pq insertion based on total_cost, 
+            # pq shouldn't be affected by this, 
+            # only thing affected would be the parent path tracking. 
+            # so we can exclude it if node is already included in parent
+            # this case is like arad -> sibiu -> arad
+            # if node not in g_score or new_cost < g_score.get(node):
+            if node not in visited:
                 parent[node] = current_node
-                g_score[node] = new_cost
-                h_val = heuristic(grid, grid[node.x][node.y], grid[end_node.x][end_node.y], heuristic_fx)
-                f_val = new_cost + h_val
-                pq.put((f_val, next(counter), node))
+            g_score[node] = new_cost
+            h_val = heuristic(grid, grid[node.x][node.y], grid[end_node.x][end_node.y], heuristic_fx)
+            f_val = new_cost + h_val
+            pq.put((f_val, next(counter), node))
 
 
 def gbfs(grid, start_node: Node, end_node: Node, heuristic_fx: HeuristicType = HeuristicType.BOUNDING_BOX_RISK_WEIGHTED):
@@ -241,8 +248,8 @@ def gbfs(grid, start_node: Node, end_node: Node, heuristic_fx: HeuristicType = H
 def main():
     grid = build_grid(GRID_SIZE, 0,0,6,7)
     show_grid(grid)
-    # astar(grid, grid[0][0], grid[6][7])
-    gbfs(grid, grid[0][0], grid[6][7], heuristic_fx = HeuristicType.BOUNDING_BOX_RISK_WEIGHTED)
+    astar(grid, grid[0][0], grid[6][7],heuristic_fx=HeuristicType.EUCLIDEAN_DISTANCE)
+    # gbfs(grid, grid[0][0], grid[6][7], heuristic_fx = HeuristicType.BOUNDING_BOX_RISK_WEIGHTED)
 
 if __name__ == "__main__":
     main()
