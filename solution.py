@@ -15,8 +15,8 @@ class NodeType(Enum):
 
 class MovementModel(Enum):
     NORTH = 1
-    SOUTH = 2
-    EAST = 3
+    EAST = 2
+    SOUTH = 3
     WEST = 4
 
 class Node:
@@ -40,7 +40,7 @@ def manhatten_distance(current_state: Node, goal_state: Node):
 
 def bounding_box_risk_weighted(grid: List[List[Node]], current_state: Node, goal_state: Node):
     manhatten = manhatten_distance(current_state, goal_state)
-    k = abs(goal_state.x - current_state.x+1) * abs(goal_state.y - current_state.y+1)
+    k = (abs(goal_state.x - current_state.x)+1) * (abs(goal_state.y - current_state.y)+1)
     x_min = min(current_state.x, goal_state.x)
     x_max = max(current_state.x, goal_state.x)
     y_min = min(current_state.y, goal_state.y)
@@ -120,24 +120,35 @@ def show_grid(grid, path=[]):
         print(boundary)
     print("\n")
 
+# get valid neighbours of a node in the grid
+# we can move as per MovementModel in 4 directions, so we will have at max 4 neighbours for a node
+# we need to get the correct neighbours as per the priority order of movement model, and also check for the boundaries of the grid
 def get_neighbours(grid, node: Node):
+    """
+    Return orthogonal neighbours in priority order: NORTH, EAST, SOUTH, WEST.
+
+    Note: grid is indexed as grid[x][y] where x is row (vertical axis) and
+    y is column (horizontal axis). NORTH decreases x, SOUTH increases x,
+    EAST increases y, WEST decreases y.
+    """
     neighbours = []
-    
-    # traverse left
-    if node.x >=1:
-        neighbours.append(grid[node.x-1][node.y])
-    
-    # traverse right
-    if node.x < GRID_SIZE - 1:
-        neighbours.append(grid[node.x+1][node.y])
+    size = len(grid)
 
-    # traverse down
-    if node.y < GRID_SIZE - 1:
-        neighbours.append(grid[node.x][node.y+1])
+    #NORTH
+    if node.x - 1 >= 0:
+        neighbours.append(grid[node.x - 1][node.y])
 
-    # traverse up
-    if node.y >=1:
-        neighbours.append(grid[node.x][node.y-1])
+    #EAST
+    if node.y + 1 < size:
+        neighbours.append(grid[node.x][node.y + 1])
+
+    #SOUTH
+    if node.x + 1 < size:
+        neighbours.append(grid[node.x + 1][node.y])
+
+    #WEST
+    if node.y - 1 >= 0:
+        neighbours.append(grid[node.x][node.y - 1])
 
     return neighbours
 
@@ -189,10 +200,10 @@ def gbfs(grid, start_node: Node, end_node: Node, heuristic_fx: HeuristicType = H
     pq = queue.PriorityQueue()
     counter = itertools.count()
     visited = set()
-    explored = set()
+    #explored = set()
     parent = {}
     parent[start_node] = None
-    explored.add(start_node)
+    #explored.add(start_node)
     h_val = heuristic(grid, grid[start_node.x][start_node.y], grid[end_node.x][end_node.y], heuristic_fx)
     pq.put((h_val, next(counter), start_node))
     while not pq.empty():
@@ -214,10 +225,13 @@ def gbfs(grid, start_node: Node, end_node: Node, heuristic_fx: HeuristicType = H
 
             print("DESTINATION REACHED WITH COST")
             break
-    
-        for node in get_neighbours(grid, current_node):
-            if node not in explored:
-                explored.add(node)
+        neighbours = get_neighbours(grid, current_node)
+        for node in neighbours:
+            # commented below as we want to add all the neighbours node, and not fix the path for gbfs.
+            # as it is a greedy algorithm and we want to explore all the nodes in the priority order of heuristic value, and not get stuck in a local minima
+            # if node not in explored:
+            #     explored.add(node)
+            if node not in visited:
                 parent[node] = current_node
                 h_val = heuristic(grid, grid[node.x][node.y], grid[end_node.x][end_node.y], heuristic_fx)
                 pq.put((h_val, next(counter), node))
@@ -228,7 +242,7 @@ def main():
     grid = build_grid(GRID_SIZE, 0,0,6,7)
     show_grid(grid)
     # astar(grid, grid[0][0], grid[6][7])
-    gbfs(grid, grid[0][0], grid[6][7])
+    gbfs(grid, grid[0][0], grid[6][7], heuristic_fx = HeuristicType.BOUNDING_BOX_RISK_WEIGHTED)
 
 if __name__ == "__main__":
     main()
