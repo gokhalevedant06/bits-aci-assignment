@@ -232,7 +232,10 @@ def gbfs(grid, start_node: Node, end_node: Node, heuristic_fx: HeuristicType = H
             # if node not in explored:
             #     explored.add(node)
             if node not in visited:
-                parent[node] = current_node
+                # do not override if already there in the parent
+                # don't know what would be the situation but I think it is correct
+                if node not in parent:
+                    parent[node] = current_node
                 h_val = heuristic(grid, grid[node.x][node.y], grid[end_node.x][end_node.y], heuristic_fx)
                 pq.put((h_val, next(counter), node))
         
