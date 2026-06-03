@@ -324,7 +324,7 @@ def print_complexity_analysis():
     print("A* Space Complexity  : O(V)")
 
 
-def compare_heuristics():
+def compare_heuristics_gbfs():
     """
     Compares the performance of the two
     heuristic functions used by GBFS.
@@ -364,6 +364,82 @@ def compare_heuristics():
     h2 = results.get("GBFS-h2")
 
     if not h1 or not h2:
+        return
+
+    print(
+        f"{'Metric':<20}"
+        f"{'h1':<15}"
+        f"{'h2':<15}"
+    )
+
+    print(
+        f"{'Nodes Expanded':<20}"
+        f"{h1['nodes_expanded']:<15}"
+        f"{h2['nodes_expanded']:<15}"
+    )
+
+    print(
+        f"{'Runtime(ms)':<20}"
+        f"{round(h1['runtime'], 3):<15}"
+        f"{round(h2['runtime'], 3):<15}"
+    )
+
+    print(
+        f"{'Path Cost':<20}"
+        f"{h1['cost']:<15}"
+        f"{h2['cost']:<15}"
+    )
+
+    if h1["cost"] < h2["cost"]:
+        print("\nh1 produced a lower cost path.")
+
+    elif h2["cost"] < h1["cost"]:
+        print("\nh2 produced a lower cost path.")
+
+    else:
+        print("\nBoth heuristics produced the same cost.")
+
+def compare_heuristics_Astar():
+    """
+    Compares the performance of the two
+    heuristic functions used by GBFS.
+
+    Compared Heuristics:
+        h1 - Euclidean Distance
+        h2 - Bounding Box Risk Weighted
+
+    The comparison includes:
+
+    1. Nodes Expanded
+       Measures search efficiency.
+
+    2. Runtime
+       Measures execution speed.
+
+    3. Path Cost
+       Measures the quality of the path found.
+
+    The method also identifies which
+    heuristic produced the better path
+    based on the final path cost.
+
+    This analysis helps evaluate whether
+    the future-aware heuristic (h2)
+    provides an advantage over the
+    traditional Euclidean heuristic (h1).
+
+    Returns:
+        None
+    """
+    print("\n" + "=" * 100)
+    print("GBFS HEURISTIC COMPARISON")
+    print("=" * 100)
+
+    h1 = results.get(f"A*-{HeuristicType.EUCLIDEAN_DISTANCE.value}")
+    h2 = results.get(f"A*-{HeuristicType.BOUNDING_BOX_RISK_WEIGHTED.value}")
+
+    if not h1 or not h2:
+        print("check why heuristics are not found")
         return
 
     print(
@@ -614,7 +690,7 @@ def astar(grid, start_node: Node, end_node: Node, heuristic_fx: HeuristicType = 
 
             memory_usage = len(visited) + pq.qsize()
 
-            results["A*-h1"] = {
+            results[f"A*-{heuristic_fx.value}"] = {
                 "nodes_expanded": len(visited),
                 "runtime": runtime_ms,
                 "memory": memory_usage,
@@ -678,6 +754,7 @@ def gbfs(grid, start_node: Node, end_node: Node,
     explored = set()
     parent = {}
     parent[start_node] = None
+    expansion_history = []
     explored.add(start_node)
     h_val = heuristic(grid, grid[start_node.x][start_node.y], grid[end_node.x][end_node.y], heuristic_fx)
     pq.put((h_val, next(counter), start_node))
@@ -695,6 +772,7 @@ def gbfs(grid, start_node: Node, end_node: Node,
         if current_node in visited:
             continue
         visited.add(current_node)
+        expansion_history.append(h_val)
 
         print("\nEXPLORED NODES:")
 
@@ -718,6 +796,7 @@ def gbfs(grid, start_node: Node, end_node: Node,
             path.reverse()
 
             cost = sum(node.score for node in path)
+            path_history = [heuristic(grid, n, end_node, heuristic_fx) for n in path]
 
             show_grid(grid, path)
 
@@ -748,7 +827,9 @@ def gbfs(grid, start_node: Node, end_node: Node,
                 "memory": memory_usage,
                 "cost": cost,
                 "path_length": len(path) - 1,
-                "heuristic": round(current_h, 2)
+                "heuristic": round(current_h, 2),
+                "expansion_history": expansion_history,
+                "path_history": path_history
             }
 
             goal_found = True
@@ -757,15 +838,30 @@ def gbfs(grid, start_node: Node, end_node: Node,
         for node in get_neighbours(grid, current_node):
             if node.type == "N":
                 continue
-            if node not in explored:
-                explored.add(node)
-                parent[node] = current_node
-                h_val = heuristic(grid, grid[node.x][node.y], grid[end_node.x][end_node.y], heuristic_fx)
-                pq.put((h_val, next(counter), node))
+            if node not in visited:
+                #explored.add(node)
+                if node not in parent:
+                    parent[node] = current_node
+                    h_val = heuristic(grid, grid[node.x][node.y], grid[end_node.x][end_node.y], heuristic_fx)
+                    pq.put((h_val, next(counter), node))
 
     if not goal_found:
         print("ERROR: Goal node could not be reached.")
 
+def print_text_chart(title: str, history: list):
+    print("=" * 70)
+    print(f" VISUAL TREND RESTRUCTURING: {title}")
+    print("=" * 70)
+    if not history:
+        return
+    max_val = max(history) if max(history) > 0 else 1
+    max_bars = 35
+    print(f"{'Step / Index':<12} | {'Heuristic':<12} | Relative Visual Scale")
+    print("-" * 70)
+    for idx, val in enumerate(history):
+        bar_length = int((val / max_val) * max_bars)
+        print(f"Index {idx:<6} | {val:<12.2f} | {'█' * bar_length}")
+    print("=" * 70 + "\n")
 
 def main():
     """
@@ -809,17 +905,26 @@ def main():
     print("\nA* USING H1\n")
     astar(grid, grid[0][0], grid[6][7], HeuristicType.EUCLIDEAN_DISTANCE)
 
+    print("\nA* using H2")
+    astar(grid=grid, start_node=grid[0][0], end_node=grid[6][7], heuristic_fx=HeuristicType.BOUNDING_BOX_RISK_WEIGHTED)
+
     print("=" * 100)
 
     print_complexity_analysis()
 
     print("=" * 100)
 
-    compare_heuristics()
+    compare_heuristics_gbfs()
+    compare_heuristics_Astar()
 
     print("=" * 100)
 
     compare_algorithms()
+
+    print_text_chart("Heuristic Values to Reach Target along Path (h1) [5.b]", results["GBFS-h1"]["path_history"])
+    print_text_chart("Heuristic Values vs Chronological Expansions (h1) [5.c]", results["GBFS-h1"]["expansion_history"])
+    print_text_chart("Heuristic Values to Reach Target along Path (h2) [5.b]", results["GBFS-h2"]["path_history"])
+    print_text_chart("Heuristic Values vs Chronological Expansions (h2) [5.c]", results["GBFS-h2"]["expansion_history"])
 
 
 if __name__ == "__main__":
