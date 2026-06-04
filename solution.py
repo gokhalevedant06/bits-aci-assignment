@@ -4,10 +4,15 @@ from math import sqrt
 from typing import List
 import queue
 import time
+import os
+import sys
 
 GRID_SIZE = 8
 
 results = {}
+BASE_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
+DEFAULT_INPUT_FILE = os.path.join(BASE_DIR, "inputPSXX.txt")
+DEFAULT_OUTPUT_FILE = os.path.join(BASE_DIR, "outputPSXX.txt")
 
 
 class NodeType(Enum):
@@ -220,6 +225,105 @@ def build_grid(size: int, start_x, start_y, end_x, end_y):
         grid[x][y] = Node(x, y, NodeType.NO_FLY_ZONE.value)
 
     return grid
+
+
+class Tee:
+    """Writes output to both the console and a file."""
+
+    def __init__(self, *streams) -> None:
+        self.streams = streams
+
+    def write(self, data):
+        for stream in self.streams:
+            stream.write(data)
+        return len(data)
+
+    def flush(self):
+        for stream in self.streams:
+            stream.flush()
+
+
+def load_grid_from_file(file_path: str):
+    """
+    Reads an 8x8 grid from a text file using symbols S, E, ., W, and N.
+
+    The parser accepts either compact rows or spaced rows, so the evaluator
+    can provide the grid in a slightly different formatting style without
+    breaking the program.
+
+    Returns:
+        (grid, start_node, end_node) if the file is valid, otherwise None.
+    """
+    if not os.path.exists(file_path):
+        return None
+
+    rows = []
+    with open(file_path, 'r', encoding='utf-8') as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line:
+                continue
+            tokens = [ch for ch in line if ch in 'SE.WN']
+            if len(tokens) == GRID_SIZE:
+                rows.append(tokens)
+
+    if len(rows) != GRID_SIZE:
+        return None
+
+    grid = []
+    start_node = None
+    end_node = None
+
+    for x, row in enumerate(rows):
+        grid_row = []
+        for y, symbol in enumerate(row):
+            if symbol == 'S':
+                node = Node(x, y, NodeType.START.value)
+                start_node = node
+            elif symbol == 'E':
+                node = Node(x, y, NodeType.END.value)
+                end_node = node
+            elif symbol == 'W':
+                node = Node(x, y, NodeType.WEATHER_HAZARD.value)
+            elif symbol == 'N':
+                node = Node(x, y, NodeType.NO_FLY_ZONE.value)
+            else:
+                node = Node(x, y, NodeType.PASSABLE_AIRSPACE.value)
+            grid_row.append(node)
+        grid.append(grid_row)
+
+    if start_node is None or end_node is None:
+        return None
+
+    return grid, start_node, end_node
+
+
+def print_peas_components():
+    """Prints the PEAS description required by the assignment."""
+    print("\n" + "=" * 100)
+    print("PEAS COMPONENTS")
+    print("=" * 100)
+    print("Performance: Reach the goal with low heuristic cost, fewer expansions, and avoid no-fly zones.")
+    print("Environment: 8x8 grid with passable airspace, weather hazards, and no-fly zones.")
+    print("Actuators: Move North, East, South, or West.")
+    print("Sensors: Current node, frontier, explored set, heuristic values, and grid cell types.")
+
+
+def print_trap_analysis():
+    """Prints a compact trap/inefficiency summary collected during search."""
+    print("\n" + "=" * 100)
+    print("TRAP / INEFFICIENT REGION ANALYSIS")
+    print("=" * 100)
+    print(f"{'Algorithm':<14}{'Heuristic':<10}{'Heuristic Value':<18}{'Trapped At':<16}{'Next Iteration':<16}")
+    any_trap = False
+    for algo, data in results.items():
+        for trap in data.get('traps', []):
+            any_trap = True
+            trapped_at = f"({trap['node'][0]},{trap['node'][1]})"
+            next_iter = trap['escape'] if trap['escape'] is not None else 'N/A'
+            print(f"{algo:<14}{trap['heuristic']:<10}{trap['value']:<18}{trapped_at:<16}{next_iter:<16}")
+    if not any_trap:
+        print("No trap-like dead-end situations were encountered in this run.")
 
 
 def show_grid(grid, path=[]):
@@ -621,6 +725,7 @@ def astar(grid, start_node: Node, end_node: Node, heuristic_fx: HeuristicType = 
     counter = itertools.count()
     visited = set()
     parent = {}
+    traps = []
     g_score = {}
     g_score[start_node] = 0
     parent[start_node] = None
@@ -696,12 +801,14 @@ def astar(grid, start_node: Node, end_node: Node, heuristic_fx: HeuristicType = 
                 "memory": memory_usage,
                 "cost": cost,
                 "path_length": len(path) - 1,
-                "heuristic": round(current_h, 2)
+                "heuristic": round(current_h, 2),
+                "traps": traps
             }
 
             goal_found = True
             break
 
+        added_child = False
         for node in get_neighbours(grid, current_node):
             if node in visited or node.type == "N":
                 continue
@@ -712,6 +819,18 @@ def astar(grid, start_node: Node, end_node: Node, heuristic_fx: HeuristicType = 
                 h_val = heuristic(grid, grid[node.x][node.y], grid[end_node.x][end_node.y], heuristic_fx)
                 f_val = new_cost + h_val
                 pq.put((f_val, next(counter), node))
+                added_child = True
+
+        if not added_child:
+            escape = None
+            if not pq.empty():
+                escape = f"({pq.queue[0][2].x},{pq.queue[0][2].y})"
+            traps.append({
+                "heuristic": heuristic_fx.value,
+                "value": round(current_h, 2),
+                "node": (current_node.x, current_node.y),
+                "escape": escape,
+            })
 
     if not goal_found:
         print("ERROR: Goal node could not be reached.")
@@ -752,6 +871,7 @@ def gbfs(grid, start_node: Node, end_node: Node,
     counter = itertools.count()
     visited = set()
     explored = set()
+    traps = []
     parent = {}
     parent[start_node] = None
     expansion_history = []
@@ -829,12 +949,14 @@ def gbfs(grid, start_node: Node, end_node: Node,
                 "path_length": len(path) - 1,
                 "heuristic": round(current_h, 2),
                 "expansion_history": expansion_history,
-                "path_history": path_history
+                "path_history": path_history,
+                "traps": traps
             }
 
             goal_found = True
             break
 
+        added_child = False
         for node in get_neighbours(grid, current_node):
             if node.type == "N":
                 continue
@@ -844,6 +966,18 @@ def gbfs(grid, start_node: Node, end_node: Node,
                     parent[node] = current_node
                     h_val = heuristic(grid, grid[node.x][node.y], grid[end_node.x][end_node.y], heuristic_fx)
                     pq.put((h_val, next(counter), node))
+                    added_child = True
+
+        if not added_child:
+            escape = None
+            if not pq.empty():
+                escape = f"({pq.queue[0][2].x},{pq.queue[0][2].y})"
+            traps.append({
+                "heuristic": heuristic_fx.value,
+                "value": round(current_h, 2),
+                "node": (current_node.x, current_node.y),
+                "escape": escape,
+            })
 
     if not goal_found:
         print("ERROR: Goal node could not be reached.")
@@ -878,53 +1012,70 @@ def main():
     This function serves as the entry point
     of the application.
     """
-    grid = build_grid(GRID_SIZE, 0, 0, 6, 7)
+    output_path = DEFAULT_OUTPUT_FILE
+    input_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_INPUT_FILE
 
-    print("=" * 100)
-    print("=" * 100)
+    parsed = load_grid_from_file(input_path)
+    if parsed:
+        grid, start_node, end_node = parsed
+    else:
+        grid = build_grid(GRID_SIZE, 0, 0, 6, 7)
+        start_node = grid[0][0]
+        end_node = grid[6][7]
 
-    print("\nInitial Grid\n")
+    original_stdout = sys.stdout
+    with open(output_path, 'w', encoding='utf-8') as output_file:
+        sys.stdout = Tee(original_stdout, output_file)
+        try:
+            print("=" * 100)
+            print("=" * 100)
 
-    show_grid(grid)
+            print("\nInitial Grid\n")
 
-    print("=" * 100)
-    print("=" * 100)
+            show_grid(grid)
 
-    print("\nGBFS USING H2\n")
-    gbfs(grid, grid[0][0], grid[6][7], HeuristicType.BOUNDING_BOX_RISK_WEIGHTED)
+            print("=" * 100)
+            print("=" * 100)
 
-    print("=" * 100)
-    print("=" * 100)
+            print("\nGBFS USING H2\n")
+            gbfs(grid, start_node, end_node, HeuristicType.BOUNDING_BOX_RISK_WEIGHTED)
 
-    print("\nGBFS USING H1\n")
-    gbfs(grid, grid[0][0], grid[6][7], HeuristicType.EUCLIDEAN_DISTANCE)
+            print("=" * 100)
+            print("=" * 100)
 
-    print("=" * 100)
-    print("=" * 100)
+            print("\nGBFS USING H1\n")
+            gbfs(grid, start_node, end_node, HeuristicType.EUCLIDEAN_DISTANCE)
 
-    print("\nA* USING H1\n")
-    astar(grid, grid[0][0], grid[6][7], HeuristicType.EUCLIDEAN_DISTANCE)
+            print("=" * 100)
+            print("=" * 100)
 
-    print("\nA* using H2")
-    astar(grid=grid, start_node=grid[0][0], end_node=grid[6][7], heuristic_fx=HeuristicType.BOUNDING_BOX_RISK_WEIGHTED)
+            print("\nA* USING H1\n")
+            astar(grid, start_node, end_node, HeuristicType.EUCLIDEAN_DISTANCE)
 
-    print("=" * 100)
+            print("\nA* using H2")
+            astar(grid=grid, start_node=start_node, end_node=end_node, heuristic_fx=HeuristicType.BOUNDING_BOX_RISK_WEIGHTED)
 
-    print_complexity_analysis()
+            print("=" * 100)
 
-    print("=" * 100)
+            print_peas_components()
+            print_complexity_analysis()
 
-    compare_heuristics_gbfs()
-    compare_heuristics_Astar()
+            print("=" * 100)
 
-    print("=" * 100)
+            compare_heuristics_gbfs()
+            compare_heuristics_Astar()
 
-    compare_algorithms()
+            print("=" * 100)
 
-    print_text_chart("Heuristic Values to Reach Target along Path (h1) [5.b]", results["GBFS-h1"]["path_history"])
-    print_text_chart("Heuristic Values vs Chronological Expansions (h1) [5.c]", results["GBFS-h1"]["expansion_history"])
-    print_text_chart("Heuristic Values to Reach Target along Path (h2) [5.b]", results["GBFS-h2"]["path_history"])
-    print_text_chart("Heuristic Values vs Chronological Expansions (h2) [5.c]", results["GBFS-h2"]["expansion_history"])
+            compare_algorithms()
+            print_trap_analysis()
+
+            print_text_chart("Heuristic Values to Reach Target along Path (h1) [5.b]", results["GBFS-h1"]["path_history"])
+            print_text_chart("Heuristic Values vs Chronological Expansions (h1) [5.c]", results["GBFS-h1"]["expansion_history"])
+            print_text_chart("Heuristic Values to Reach Target along Path (h2) [5.b]", results["GBFS-h2"]["path_history"])
+            print_text_chart("Heuristic Values vs Chronological Expansions (h2) [5.c]", results["GBFS-h2"]["expansion_history"])
+        finally:
+            sys.stdout = original_stdout
 
 
 if __name__ == "__main__":
